@@ -1,7 +1,7 @@
 {
   "name": "Quản Lý Chi Tiêu Pro",
   "short_name": "QL Chi Tiêu",
-  "description": "Ứng dụng quản lý chi tiêu cá nhân - Pro Vip EAP",
+  "description": "Ứng dụng quản lý chi tiêu cá nhân - Pro Vip",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f5f7fa",
