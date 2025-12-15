@@ -1,11 +1,11 @@
 // ========== GLOBAL VARIABLES ==========
 let currentUser = null;
-let users = JSON.parse(localStorage.getItem('expenseManagerUsers') || '{}');
-let currentTheme = JSON.parse(localStorage.getItem('expenseManagerTheme') || '{}');
 let monthlyLimit = 0;
 let expenses = [];
 let categories = [];
 let selectedIcon = 'fa-tag';
+let firebaseService = null;
+let currentTheme = null;
 
 // ========== CONSTANTS ==========
 const AVAILABLE_ICONS = [
@@ -82,8 +82,15 @@ function parseMoneyFormat(input) {
     return isNaN(number) ? 0 : Math.round(number * multiplier);
 }
 
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('vi-VN');
+}
+
 // ========== THEME FUNCTIONS ==========
 function loadTheme() {
+    currentTheme = JSON.parse(localStorage.getItem('expenseManagerTheme') || '{}');
+    
     if (Object.keys(currentTheme).length === 0) {
         currentTheme = {
             primaryColor: '#3498db',
@@ -119,7 +126,10 @@ function applyTheme() {
     root.style.setProperty('--background-blur', currentTheme.backgroundBlur + 'px');
     root.style.setProperty('--background-overlay', currentTheme.backgroundOverlay);
     
-    document.querySelector('meta[name="theme-color"]').setAttribute('content', currentTheme.primaryColor);
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+        themeColorMeta.setAttribute('content', currentTheme.primaryColor);
+    }
 }
 
 function renderThemeControls() {
@@ -151,6 +161,7 @@ function renderThemeControls() {
             
             updateBackgroundPreview();
             applyTheme();
+            localStorage.setItem('expenseManagerTheme', JSON.stringify(currentTheme));
         });
         
         colorPaletteContainer.appendChild(colorElement);
@@ -179,11 +190,7 @@ function updateBackgroundPreview() {
     const preview = document.getElementById('backgroundPreview');
     if (preview) {
         if (currentTheme.backgroundImage && currentTheme.backgroundImage !== 'none') {
-            if (currentTheme.backgroundImage.startsWith('url(')) {
-                preview.style.backgroundImage = currentTheme.backgroundImage;
-            } else {
-                preview.style.backgroundImage = currentTheme.backgroundImage;
-            }
+            preview.style.backgroundImage = currentTheme.backgroundImage;
         } else {
             preview.style.backgroundImage = 'linear-gradient(135deg, var(--primary-color), var(--secondary-color))';
         }
@@ -387,11 +394,6 @@ function renderExpensesTable() {
     });
 }
 
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('vi-VN');
-}
-
 function deleteExpense(id) {
     if (confirm("Bạn có chắc chắn muốn xóa khoản chi tiêu này?")) {
         expenses = expenses.filter(expense => expense.id !== id);
@@ -437,7 +439,7 @@ function updateSummary() {
     document.getElementById('expensesCount').textContent = `${expenses.length} khoản chi`;
 }
 
-// ========== USER FUNCTIONS ==========
+// ========== USER INTERFACE FUNCTIONS ==========
 function showAuthForm() {
     document.getElementById('authContainer').style.display = 'block';
     document.getElementById('mainApp').style.display = 'none';
@@ -458,7 +460,20 @@ function showMainApp() {
     document.getElementById('themeCustomizer').style.display = 'flex';
     
     updateUserUI();
-    loadUserData();
+    updateSummary();
+    renderExpensesTable();
+    renderCategories();
+}
+
+function showAccountManagement() {
+    document.getElementById('authContainer').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'none';
+    document.getElementById('userMenu').style.display = 'none';
+    document.getElementById('accountManagementPage').style.display = 'block';
+    document.getElementById('backToAppButton').style.display = 'flex';
+    document.getElementById('themeCustomizer').style.display = 'none';
+    
+    loadAccountManagementData();
 }
 
 function showLoginForm() {
@@ -478,10 +493,10 @@ function updateUserUI() {
         const dropdownName = document.getElementById('dropdownName');
         const dropdownEmail = document.getElementById('dropdownEmail');
         
-        if (userName) userName.textContent = currentUser.name;
-        if (welcomeName) welcomeName.textContent = currentUser.name;
-        if (dropdownName) dropdownName.textContent = currentUser.name;
-        if (dropdownEmail) dropdownEmail.textContent = currentUser.email;
+        if (userName) userName.textContent = currentUser.name || 'Người dùng';
+        if (welcomeName) welcomeName.textContent = currentUser.name || 'Người dùng';
+        if (dropdownName) dropdownName.textContent = currentUser.name || 'Người dùng';
+        if (dropdownEmail) dropdownEmail.textContent = currentUser.email || '';
         
         updateUserAvatar();
     }
@@ -492,7 +507,12 @@ function updateUserAvatar() {
     const dropdownAvatar = document.getElementById('dropdownAvatar');
     
     if (currentUser) {
-        const initials = currentUser.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+        const initials = (currentUser.name || 'NG')
+            .split(' ')
+            .map(n => n[0])
+            .join('')
+            .toUpperCase()
+            .substring(0, 2);
         
         if (currentUser.avatar) {
             const avatarHTML = `<img src="${currentUser.avatar}" class="user-avatar-img" alt="${currentUser.name}">`;
@@ -505,116 +525,141 @@ function updateUserAvatar() {
     }
 }
 
-function loadUserData() {
-    if (currentUser) {
-        monthlyLimit = currentUser.monthlyLimit || 0;
-        expenses = currentUser.expenses || [];
-        categories = currentUser.categories || [];
-        
-        // Initialize default categories if empty
-        if (!categories || categories.length === 0) {
-            categories = [
-                { id: 'an_uong', name: 'Ăn uống', icon: 'fa-utensils' },
-                { id: 'mua_sam', name: 'Mua sắm', icon: 'fa-shopping-cart' },
-                { id: 'di_chuyen', name: 'Di chuyển', icon: 'fa-car' },
-                { id: 'hoa_don', name: 'Hóa đơn', icon: 'fa-file-invoice' },
-                { id: 'giai_tri', name: 'Giải trí', icon: 'fa-gamepad' },
-                { id: 'suc_khoe', name: 'Sức khỏe', icon: 'fa-heartbeat' },
-                { id: 'hoc_tap', name: 'Học tập', icon: 'fa-graduation-cap' },
-                { id: 'khac', name: 'Khác', icon: 'fa-tag' }
-            ];
-            currentUser.categories = categories;
-            saveUserData();
-        }
-        
-        updateSummary();
-        renderExpensesTable();
-        renderCategories();
-    }
-}
-
-function saveUserData() {
-    if (currentUser) {
-        currentUser.monthlyLimit = monthlyLimit;
-        currentUser.expenses = expenses;
-        currentUser.categories = categories;
-        users[currentUser.id] = currentUser;
-        localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    }
-}
-
-function login(emailOrUsername, password) {
-    // Find user
-    let user = null;
-    for (const userId in users) {
-        const u = users[userId];
-        if ((u.email === emailOrUsername || u.username === emailOrUsername) && u.password === password) {
-            user = u;
-            break;
-        }
-    }
+// ========== FIREBASE INTEGRATION FUNCTIONS ==========
+async function login(email, password) {
+    showNotification('Đang đăng nhập...', 'info');
     
-    // Demo login (for testing)
-    if (!user && (emailOrUsername === 'demo' || emailOrUsername === 'test' || emailOrUsername === '')) {
-        const demoUser = {
-            id: 'demo123',
-            name: 'Người dùng Demo',
-            email: 'demo@example.com',
-            username: 'demo',
-            password: '123456',
-            avatar: null,
-            monthlyLimit: 5000000,
-            expenses: [
-                { id: 1, category: 'an_uong', amount: 150000, date: new Date().toISOString().split('T')[0] },
-                { id: 2, category: 'mua_sam', amount: 300000, date: new Date().toISOString().split('T')[0] }
-            ],
-            categories: [
-                { id: 'an_uong', name: 'Ăn uống', icon: 'fa-utensils' },
-                { id: 'mua_sam', name: 'Mua sắm', icon: 'fa-shopping-cart' },
-                { id: 'di_chuyen', name: 'Di chuyển', icon: 'fa-car' }
-            ]
-        };
-        users[demoUser.id] = demoUser;
-        localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-        user = demoUser;
-    }
+    const result = await firebaseService.login(email, password);
     
-    if (user) {
-        currentUser = user;
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-        showMainApp();
-        showNotification(`Chào mừng ${user.name} trở lại!`, 'success');
+    if (result.success) {
+        // Load user data from Firebase
+        const userData = await firebaseService.loadUserData();
+        
+        if (userData) {
+            currentUser = userData;
+            monthlyLimit = currentUser.monthlyLimit || 0;
+            expenses = currentUser.expenses || [];
+            categories = currentUser.categories || [];
+            
+            // Initialize default categories if empty
+            if (!categories || categories.length === 0) {
+                categories = [
+                    { id: 'an_uong', name: 'Ăn uống', icon: 'fa-utensils' },
+                    { id: 'mua_sam', name: 'Mua sắm', icon: 'fa-shopping-cart' },
+                    { id: 'di_chuyen', name: 'Di chuyển', icon: 'fa-car' },
+                    { id: 'hoa_don', name: 'Hóa đơn', icon: 'fa-file-invoice' },
+                    { id: 'giai_tri', name: 'Giải trí', icon: 'fa-gamepad' },
+                    { id: 'suc_khoe', name: 'Sức khỏe', icon: 'fa-heartbeat' },
+                    { id: 'hoc_tap', name: 'Học tập', icon: 'fa-graduation-cap' },
+                    { id: 'khac', name: 'Khác', icon: 'fa-tag' }
+                ];
+                currentUser.categories = categories;
+                await saveUserData();
+            }
+            
+            showMainApp();
+            showNotification(`Chào mừng ${currentUser.name} trở lại!`, 'success');
+            
+            // Sync data if online
+            if (firebaseService.isOnline()) {
+                const syncResult = await firebaseService.syncData();
+                if (syncResult.success) {
+                    // Reload data after sync
+                    const updatedData = await firebaseService.loadUserData();
+                    if (updatedData) {
+                        currentUser = updatedData;
+                        monthlyLimit = currentUser.monthlyLimit || 0;
+                        expenses = currentUser.expenses || [];
+                        categories = currentUser.categories || [];
+                        
+                        updateSummary();
+                        renderExpensesTable();
+                        renderCategories();
+                    }
+                }
+            }
+        }
         return true;
+    } else {
+        showNotification(result.message, 'error');
+        return false;
     }
-    
-    showNotification('Email/username hoặc mật khẩu không đúng!', 'error');
-    return false;
 }
 
-function logout() {
-    currentUser = null;
-    localStorage.removeItem('currentUser');
-    monthlyLimit = 0;
-    expenses = [];
-    categories = [];
-    showAuthForm();
-    showNotification('Đã đăng xuất thành công!', 'success');
+async function register(name, email, username, password) {
+    showNotification('Đang đăng ký...', 'info');
+    
+    const userData = {
+        name: name,
+        username: username,
+        monthlyLimit: 0,
+        expenses: [],
+        categories: [
+            { id: 'an_uong', name: 'Ăn uống', icon: 'fa-utensils' },
+            { id: 'mua_sam', name: 'Mua sắm', icon: 'fa-shopping-cart' },
+            { id: 'di_chuyen', name: 'Di chuyển', icon: 'fa-car' },
+            { id: 'hoa_don', name: 'Hóa đơn', icon: 'fa-file-invoice' },
+            { id: 'giai_tri', name: 'Giải trí', icon: 'fa-gamepad' },
+            { id: 'suc_khoe', name: 'Sức khỏe', icon: 'fa-heartbeat' },
+            { id: 'hoc_tap', name: 'Học tập', icon: 'fa-graduation-cap' },
+            { id: 'khac', name: 'Khác', icon: 'fa-tag' }
+        ]
+    };
+    
+    const result = await firebaseService.register(email, password, userData);
+    
+    if (result.success) {
+        currentUser = result.userData;
+        monthlyLimit = 0;
+        expenses = [];
+        categories = userData.categories;
+        
+        showMainApp();
+        showNotification('Đăng ký thành công!', 'success');
+        return { success: true, message: 'Đăng ký thành công!' };
+    } else {
+        return { success: false, message: result.message };
+    }
+}
+
+async function logout() {
+    const result = await firebaseService.logout();
+    if (result.success) {
+        currentUser = null;
+        monthlyLimit = 0;
+        expenses = [];
+        categories = [];
+        showAuthForm();
+        showNotification('Đã đăng xuất thành công!', 'success');
+    } else {
+        showNotification(result.message, 'error');
+    }
+}
+
+async function saveUserData() {
+    if (!currentUser) return;
+    
+    const userData = {
+        id: currentUser.id || currentUser.uid,
+        name: currentUser.name,
+        email: currentUser.email,
+        username: currentUser.username,
+        avatar: currentUser.avatar,
+        monthlyLimit: monthlyLimit,
+        expenses: expenses,
+        categories: categories
+    };
+    
+    const result = await firebaseService.saveUserData(userData);
+    
+    if (result.offline) {
+        console.log('Data saved locally (offline)');
+    } else {
+        console.log('Data saved to cloud');
+    }
 }
 
 // ========== ACCOUNT MANAGEMENT FUNCTIONS ==========
-function showAccountManagement() {
-    console.log('Showing account management...');
-    document.getElementById('authContainer').style.display = 'none';
-    document.getElementById('mainApp').style.display = 'none';
-    document.getElementById('userMenu').style.display = 'none';
-    document.getElementById('accountManagementPage').style.display = 'block';
-    document.getElementById('backToAppButton').style.display = 'flex';
-    document.getElementById('themeCustomizer').style.display = 'none';
-    
-    loadAccountManagementData();
-}
-
 function loadAccountManagementData() {
     console.log('Loading account management data...');
     
@@ -687,68 +732,107 @@ function updateAccountAvatar() {
         profilePicture.innerHTML = `<img src="${currentUser.avatar}" class="profile-picture-img" alt="${currentUser.name}">`;
     } else if (currentUser) {
         // Show placeholder with initials
-        const initials = currentUser.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+        const initials = (currentUser.name || 'NG')
+            .split(' ')
+            .map(n => n[0])
+            .join('')
+            .toUpperCase()
+            .substring(0, 2);
         profilePicture.innerHTML = `<div class="profile-picture-placeholder">${initials}</div>`;
     } else {
         profilePicture.innerHTML = '<div class="profile-picture-placeholder">?</div>';
     }
 }
 
-function updatePersonalInfo(name, username, email) {
-    // Check if email is being changed and if it's already used
-    if (email !== currentUser.email) {
-        for (const userId in users) {
-            const user = users[userId];
-            if (user.id !== currentUser.id && user.email === email) {
-                return { success: false, message: 'Email đã được sử dụng bởi tài khoản khác!' };
-            }
-        }
+async function updatePersonalInfo(name, username, email) {
+    showNotification('Đang cập nhật...', 'info');
+    
+    const userData = { name, username, email };
+    const result = await firebaseService.updateProfile(userData);
+    
+    if (result.success) {
+        currentUser.name = name;
+        currentUser.username = username;
+        currentUser.email = email;
+        
+        updateUserUI();
+        updateAccountAvatar();
+        
+        showNotification('Cập nhật thông tin thành công!', 'success');
+        return { success: true, message: 'Cập nhật thông tin thành công!' };
+    } else {
+        return { success: false, message: result.message };
     }
+}
+
+async function changeAccountPassword(currentPassword, newPassword) {
+    showNotification('Đang đổi mật khẩu...', 'info');
     
-    // Check if username is being changed and if it's already used
-    if (username !== currentUser.username) {
-        for (const userId in users) {
-            const user = users[userId];
-            if (user.id !== currentUser.id && user.username === username) {
-                return { success: false, message: 'Tên đăng nhập đã được sử dụng!' };
-            }
-        }
+    const result = await firebaseService.changePassword(currentPassword, newPassword);
+    
+    if (result.success) {
+        showNotification('Đổi mật khẩu thành công!', 'success');
+        return { success: true, message: 'Đổi mật khẩu thành công!' };
+    } else {
+        return { success: false, message: result.message };
     }
+}
+
+async function updateProfilePicture(imageDataUrl) {
+    currentUser.avatar = imageDataUrl;
+    await saveUserData();
     
-    // Update user info
-    currentUser.name = name;
-    currentUser.username = username;
-    currentUser.email = email;
-    
-    // Save changes
-    users[currentUser.id] = currentUser;
-    localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    
-    // Update UI
-    updateUserUI();
     updateAccountAvatar();
+    updateUserUI();
     
-    return { success: true, message: 'Cập nhật thông tin thành công!' };
+    return { success: true, message: 'Cập nhật ảnh đại diện thành công!' };
 }
 
-function changeAccountPassword(currentPassword, newPassword) {
-    if (currentUser.password !== currentPassword) {
-        return { success: false, message: 'Mật khẩu hiện tại không đúng!' };
-    }
+async function removeProfilePicture() {
+    currentUser.avatar = null;
+    await saveUserData();
     
-    if (newPassword.length < 6) {
-        return { success: false, message: 'Mật khẩu mới phải có ít nhất 6 ký tự!' };
-    }
+    updateAccountAvatar();
+    updateUserUI();
     
-    currentUser.password = newPassword;
-    users[currentUser.id] = currentUser;
-    localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    
-    return { success: true, message: 'Đổi mật khẩu thành công!' };
+    return { success: true, message: 'Đã xóa ảnh đại diện!' };
 }
 
+async function deleteUserAccount() {
+    if (confirm("Bạn có chắc chắn muốn xóa tài khoản? Tất cả dữ liệu sẽ bị mất vĩnh viễn!")) {
+        const password = prompt("Vui lòng nhập mật khẩu để xác nhận:");
+        
+        if (password) {
+            showNotification('Đang xóa tài khoản...', 'info');
+            
+            const result = await firebaseService.deleteAccount(password);
+            
+            if (result.success) {
+                currentUser = null;
+                monthlyLimit = 0;
+                expenses = [];
+                categories = [];
+                
+                showAuthForm();
+                showNotification('Tài khoản đã được xóa thành công!', 'success');
+                return { success: true, message: 'Tài khoản đã được xóa!' };
+            } else {
+                return { success: false, message: result.message };
+            }
+        }
+    }
+    return { success: false, message: 'Hủy xóa tài khoản!' };
+}
+
+function showAccountMessage(elementId, message, type) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.textContent = message;
+        element.className = `auth-message ${type}`;
+    }
+}
+
+// ========== IMAGE COMPRESSION FUNCTION ==========
 function compressImage(file, maxWidth = 400, maxHeight = 400, quality = 0.8) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -794,65 +878,6 @@ function compressImage(file, maxWidth = 400, maxHeight = 400, quality = 0.8) {
     });
 }
 
-function updateProfilePicture(imageDataUrl) {
-    currentUser.avatar = imageDataUrl;
-    users[currentUser.id] = currentUser;
-    localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    
-    updateAccountAvatar();
-    updateUserUI();
-    
-    return { success: true, message: 'Cập nhật ảnh đại diện thành công!' };
-}
-
-function removeProfilePicture() {
-    currentUser.avatar = null;
-    users[currentUser.id] = currentUser;
-    localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    
-    updateAccountAvatar();
-    updateUserUI();
-    
-    return { success: true, message: 'Đã xóa ảnh đại diện!' };
-}
-
-function deleteUserAccount() {
-    if (confirm("Bạn có chắc chắn muốn xóa tài khoản? Tất cả dữ liệu sẽ bị mất vĩnh viễn và không thể khôi phục!")) {
-        const password = prompt("Vui lòng nhập mật khẩu để xác nhận xóa tài khoản:");
-        
-        if (password === currentUser.password) {
-            // Delete user data
-            delete users[currentUser.id];
-            localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-            localStorage.removeItem('currentUser');
-            
-            // Clear user data
-            currentUser = null;
-            monthlyLimit = 0;
-            expenses = [];
-            categories = [];
-            
-            // Show auth form
-            showAuthForm();
-            showNotification('Tài khoản đã được xóa thành công!', 'success');
-            return { success: true, message: 'Tài khoản đã được xóa!' };
-        } else {
-            return { success: false, message: 'Mật khẩu không đúng!' };
-        }
-    }
-    return { success: false, message: 'Hủy xóa tài khoản!' };
-}
-
-function showAccountMessage(elementId, message, type) {
-    const element = document.getElementById(elementId);
-    if (element) {
-        element.textContent = message;
-        element.className = `auth-message ${type}`;
-    }
-}
-
 // ========== SETUP EVENT LISTENERS ==========
 function setupEventListeners() {
     console.log('Setting up event listeners...');
@@ -884,30 +909,12 @@ function setupEventListeners() {
                 return;
             }
             
-            // Simple registration
-            const newUser = {
-                id: Date.now().toString(),
-                name: name,
-                email: email,
-                username: username,
-                password: password,
-                avatar: null,
-                monthlyLimit: 0,
-                expenses: [],
-                categories: [
-                    { id: 'an_uong', name: 'Ăn uống', icon: 'fa-utensils' },
-                    { id: 'mua_sam', name: 'Mua sắm', icon: 'fa-shopping-cart' }
-                ]
-            };
+            if (password.length < 6) {
+                showNotification('Mật khẩu phải có ít nhất 6 ký tự!', 'error');
+                return;
+            }
             
-            users[newUser.id] = newUser;
-            localStorage.setItem('expenseManagerUsers', JSON.stringify(users));
-            
-            currentUser = newUser;
-            localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            
-            showMainApp();
-            showNotification('Đăng ký thành công!', 'success');
+            register(name, email, username, password);
         });
     }
     
@@ -957,18 +964,6 @@ function setupEventListeners() {
         document.getElementById('themePanel').classList.toggle('show');
     });
     
-    document.getElementById('opacitySlider')?.addEventListener('input', function() {
-        currentTheme.cardOpacity = parseFloat(this.value);
-        document.getElementById('opacityValue').textContent = Math.round(currentTheme.cardOpacity * 100) + '%';
-        applyTheme();
-    });
-    
-    document.getElementById('blurSlider')?.addEventListener('input', function() {
-        currentTheme.backgroundBlur = parseInt(this.value);
-        document.getElementById('blurValue').textContent = currentTheme.backgroundBlur + 'px';
-        applyTheme();
-    });
-    
     document.getElementById('uploadBackgroundBtn')?.addEventListener('click', function() {
         document.getElementById('backgroundInput').click();
     });
@@ -981,6 +976,7 @@ function setupEventListeners() {
                 currentTheme.backgroundImage = `url(${event.target.result})`;
                 updateBackgroundPreview();
                 applyTheme();
+                localStorage.setItem('expenseManagerTheme', JSON.stringify(currentTheme));
                 showNotification('Đã cập nhật ảnh nền!', 'success');
             };
             reader.readAsDataURL(file);
@@ -992,6 +988,7 @@ function setupEventListeners() {
         currentTheme.backgroundImage = 'none';
         updateBackgroundPreview();
         applyTheme();
+        localStorage.setItem('expenseManagerTheme', JSON.stringify(currentTheme));
         showNotification('Đã xóa ảnh nền!', 'success');
     });
     
@@ -1017,6 +1014,7 @@ function setupEventListeners() {
         };
         applyTheme();
         renderThemeControls();
+        localStorage.setItem('expenseManagerTheme', JSON.stringify(currentTheme));
         showNotification('Đã đặt lại giao diện mặc định!', 'success');
     });
     
@@ -1159,14 +1157,15 @@ function setupEventListeners() {
             const username = document.getElementById('accountUsername').value.trim();
             const email = document.getElementById('accountEmail').value.trim();
             
-            const result = updatePersonalInfo(name, username, email);
-            showAccountMessage('personalInfoMessage', result.message, result.success ? 'success' : 'error');
-            
-            if (result.success) {
-                setTimeout(() => {
-                    showMainApp();
-                }, 1500);
-            }
+            updatePersonalInfo(name, username, email).then(result => {
+                showAccountMessage('personalInfoMessage', result.message, result.success ? 'success' : 'error');
+                
+                if (result.success) {
+                    setTimeout(() => {
+                        showMainApp();
+                    }, 1500);
+                }
+            });
         });
     }
     
@@ -1193,19 +1192,25 @@ function setupEventListeners() {
                 return;
             }
             
-            const result = changeAccountPassword(currentPassword, newPassword);
-            showAccountMessage('passwordChangeMessage', result.message, result.success ? 'success' : 'error');
-            
-            if (result.success) {
-                // Clear password fields
-                document.getElementById('accountCurrentPassword').value = '';
-                document.getElementById('accountNewPassword').value = '';
-                document.getElementById('accountConfirmPassword').value = '';
-                
-                setTimeout(() => {
-                    loadAccountManagementData();
-                }, 1500);
+            if (newPassword.length < 6) {
+                showAccountMessage('passwordChangeMessage', 'Mật khẩu phải có ít nhất 6 ký tự!', 'error');
+                return;
             }
+            
+            changeAccountPassword(currentPassword, newPassword).then(result => {
+                showAccountMessage('passwordChangeMessage', result.message, result.success ? 'success' : 'error');
+                
+                if (result.success) {
+                    // Clear password fields
+                    document.getElementById('accountCurrentPassword').value = '';
+                    document.getElementById('accountNewPassword').value = '';
+                    document.getElementById('accountConfirmPassword').value = '';
+                    
+                    setTimeout(() => {
+                        loadAccountManagementData();
+                    }, 1500);
+                }
+            });
         });
     }
     
@@ -1242,16 +1247,28 @@ function setupEventListeners() {
                     return;
                 }
                 
-                // Compress and update avatar
-                compressImage(file)
-                    .then(compressedImage => {
-                        const result = updateProfilePicture(compressedImage);
-                        showNotification(result.message, 'success');
-                    })
-                    .catch(error => {
-                        console.error('Image processing error:', error);
-                        showNotification('Có lỗi xảy ra khi xử lý ảnh!', 'error');
+                // Try to upload to Firebase first
+                if (firebaseService && firebaseService.currentUser) {
+                    firebaseService.uploadProfilePicture(file).then(result => {
+                        if (result.success) {
+                            updateProfilePicture(result.url).then(result => {
+                                showNotification(result.message, 'success');
+                            });
+                        }
                     });
+                } else {
+                    // Fallback to local compression
+                    compressImage(file)
+                        .then(compressedImage => {
+                            updateProfilePicture(compressedImage).then(result => {
+                                showNotification(result.message, 'success');
+                            });
+                        })
+                        .catch(error => {
+                            console.error('Image processing error:', error);
+                            showNotification('Có lỗi xảy ra khi xử lý ảnh!', 'error');
+                        });
+                }
                 
                 // Reset file input
                 e.target.value = '';
@@ -1263,8 +1280,9 @@ function setupEventListeners() {
     const removePictureBtn = document.getElementById('removePictureBtn');
     if (removePictureBtn) {
         removePictureBtn.addEventListener('click', function() {
-            const result = removeProfilePicture();
-            showNotification(result.message, 'success');
+            removeProfilePicture().then(result => {
+                showNotification(result.message, 'success');
+            });
         });
     }
     
@@ -1272,10 +1290,11 @@ function setupEventListeners() {
     const deleteAccountBtn = document.getElementById('deleteAccountBtn');
     if (deleteAccountBtn) {
         deleteAccountBtn.addEventListener('click', function() {
-            const result = deleteUserAccount();
-            if (!result.success && result.message !== 'Hủy xóa tài khoản!') {
-                showNotification(result.message, 'error');
-            }
+            deleteUserAccount().then(result => {
+                if (!result.success && result.message !== 'Hủy xóa tài khoản!') {
+                    showNotification(result.message, 'error');
+                }
+            });
         });
     }
     
@@ -1286,6 +1305,14 @@ function setupEventListeners() {
         expenseDate.value = today.toISOString().split('T')[0];
     }
     
+    // 16. Demo login button (hidden)
+    const demoLoginBtn = document.getElementById('demoLoginBtn');
+    if (demoLoginBtn) {
+        demoLoginBtn.addEventListener('click', function() {
+            login('demo@expensemanager.com', '123456');
+        });
+    }
+    
     console.log('✅ All event listeners setup complete');
 }
 
@@ -1294,6 +1321,69 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('✅ DOM Content Loaded');
     
     try {
+        // Initialize Firebase service
+        if (window.firebaseService) {
+            firebaseService = window.firebaseService;
+            console.log('Firebase Service loaded');
+            
+            // Setup network listener
+            firebaseService.setupNetworkListener((status, result) => {
+                if (status === 'online' && result && result.success) {
+                    showNotification('Đã kết nối internet - Đồng bộ dữ liệu...', 'info');
+                    
+                    // Reload data if user is logged in
+                    if (currentUser) {
+                        setTimeout(async () => {
+                            const syncResult = await firebaseService.syncData();
+                            if (syncResult.success) {
+                                const updatedData = await firebaseService.loadUserData();
+                                if (updatedData) {
+                                    currentUser = updatedData;
+                                    monthlyLimit = currentUser.monthlyLimit || 0;
+                                    expenses = currentUser.expenses || [];
+                                    categories = currentUser.categories || [];
+                                    
+                                    updateSummary();
+                                    renderExpensesTable();
+                                    renderCategories();
+                                    showNotification('Đã đồng bộ dữ liệu từ đám mây!', 'success');
+                                }
+                            }
+                        }, 1000);
+                    }
+                } else if (status === 'offline') {
+                    showNotification('Đang offline - Sử dụng dữ liệu cục bộ', 'warning');
+                }
+            });
+            
+            // Listen for auth state changes
+            firebaseService.setUserChangedCallback((userData) => {
+                if (userData) {
+                    console.log('User changed callback:', userData);
+                    currentUser = userData;
+                    monthlyLimit = currentUser.monthlyLimit || 0;
+                    expenses = currentUser.expenses || [];
+                    categories = currentUser.categories || [];
+                    
+                    if (document.getElementById('mainApp').style.display === 'none') {
+                        showMainApp();
+                    } else {
+                        updateSummary();
+                        renderExpensesTable();
+                        renderCategories();
+                    }
+                } else {
+                    console.log('User signed out callback');
+                    if (document.getElementById('authContainer').style.display === 'none') {
+                        showAuthForm();
+                    }
+                }
+            });
+        } else {
+            console.error('Firebase Service not found!');
+            showNotification('Lỗi: Firebase không được tải!', 'error');
+        }
+        
         // Setup all event listeners
         setupEventListeners();
         
@@ -1303,34 +1393,32 @@ document.addEventListener('DOMContentLoaded', function() {
         // Render icon options
         renderIconOptions();
         
-        // Check if user is already logged in
-        const savedUser = localStorage.getItem('currentUser');
-        if (savedUser) {
-            try {
-                currentUser = JSON.parse(savedUser);
-                if (users[currentUser.id]) {
-                    currentUser = users[currentUser.id];
-                    showMainApp();
-                } else {
-                    showAuthForm();
-                }
-            } catch (error) {
-                console.error('Error parsing saved user:', error);
-                showAuthForm();
+        // Check if user is already logged in (from localStorage)
+        const savedUserId = localStorage.getItem('currentUserId');
+        if (savedUserId && firebaseService) {
+            const localUserData = JSON.parse(localStorage.getItem(`user_${savedUserId}`) || 'null');
+            if (localUserData && !firebaseService.currentUser) {
+                // Show offline mode with local data
+                currentUser = localUserData;
+                monthlyLimit = currentUser.monthlyLimit || 0;
+                expenses = currentUser.expenses || [];
+                categories = currentUser.categories || [];
+                
+                showMainApp();
+                showNotification('Đang sử dụng dữ liệu cục bộ', 'info');
             }
-        } else {
-            showAuthForm();
         }
         
         showNotification("Ứng dụng đã sẵn sàng!", "success");
         
     } catch (error) {
         console.error('Initialization error:', error);
-        alert('Có lỗi khởi tạo ứng dụng: ' + error.message);
+        showNotification('Lỗi khởi tạo ứng dụng: ' + error.message, 'error');
     }
 });
 
 // Handle global errors
 window.addEventListener('error', function(e) {
     console.error('Global error:', e.error);
+    showNotification('Có lỗi xảy ra: ' + (e.error?.message || 'Unknown'), 'error');
 });
