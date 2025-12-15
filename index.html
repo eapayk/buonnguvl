@@ -506,25 +506,7 @@
     <!-- Notification -->
     <div class="notification" id="notification"></div>
     
-    <!-- JavaScript -->
-    <script src="app-fixed.js"></script>
-    <script>
-    // Test xem JavaScript có chạy không
-    console.log('✅ Script đang chạy...');
-    
-    // Kiểm tra xem các phần tử có tồn tại không
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log('✅ DOM đã sẵn sàng');
-        
-    
-        document.body.appendChild(testBtn);
-        
-        console.log('Các phần tử quan trọng:');
-        console.log('- authContainer:', document.getElementById('authContainer'));
-        console.log('- loginFormElement:', document.getElementById('loginFormElement'));
-        console.log('- mainApp:', document.getElementById('mainApp'));
-    });
-</script>
+  
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
@@ -554,4 +536,5 @@
 </body>
 
 </html>
+
 
